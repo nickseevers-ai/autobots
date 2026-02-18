@@ -20,8 +20,18 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// Step shape coming from Supabase
+interface MissionStep {
+  id: string;
+  mission_id: string;
+  kind: string;
+  payload: Record<string, unknown>;
+  status: string;
+  step_order: number;
+}
+
 // Map step kinds to their worker functions
-const STEP_WORKERS: Record<string, (step: any) => Promise<any>> = {
+const STEP_WORKERS: Record<string, (step: MissionStep) => Promise<{ success: boolean; error?: string }>> = {
   scrape_dre: executeScrapeDREStep,
   research: executeResearchStep,
   write_content: executeWriteContentStep,
@@ -43,7 +53,7 @@ export async function GET(request: Request) {
     succeeded: 0,
     failed: 0,
     skipped: 0,
-    steps: [] as any[],
+    steps: [] as { id: string; kind: string; outcome: string; error?: string }[],
   };
 
   try {
@@ -94,17 +104,18 @@ export async function GET(request: Request) {
           results.failed++;
           results.steps.push({ id: step.id, kind: step.kind, outcome: 'failed', error: outcome.error });
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
         console.error(`[EXECUTE-STEP] Uncaught error in worker for step ${step.id}:`, err);
         results.failed++;
-        results.steps.push({ id: step.id, kind: step.kind, outcome: 'error', error: err.message });
+        results.steps.push({ id: step.id, kind: step.kind, outcome: 'error', error: errMsg });
 
         // Mark step as failed
         await supabase
           .from('ops_mission_steps')
           .update({
             status: 'failed',
-            error_message: err.message,
+            error_message: errMsg,
             completed_at: new Date().toISOString(),
           })
           .eq('id', step.id);
@@ -124,16 +135,17 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ success: true, results, duration_ms: duration });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : String(error);
     console.error('[EXECUTE-STEP] Fatal error:', error);
 
     await supabase.from('ops_action_runs').insert({
       action_type: 'execute_step',
       status: 'failed',
-      error_message: error.message,
+      error_message: errMsg,
       duration_ms: Date.now() - startTime,
     });
 
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: errMsg }, { status: 500 });
   }
 }
