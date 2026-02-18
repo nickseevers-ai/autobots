@@ -3,6 +3,10 @@
     {
       "path": "/api/ops/heartbeat",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/ops/execute-step",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
