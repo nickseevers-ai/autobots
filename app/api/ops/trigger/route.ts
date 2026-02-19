@@ -4,7 +4,11 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-const BASE = process.env.VERCEL_URL
+// VERCEL_PROJECT_PRODUCTION_URL = stable production domain (no deployment protection)
+// VERCEL_URL = per-deployment preview URL (has SSO protection, avoid for internal calls)
+const BASE = process.env.VERCEL_PROJECT_PRODUCTION_URL
+  ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+  : process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
   : 'http://localhost:3000';
 
