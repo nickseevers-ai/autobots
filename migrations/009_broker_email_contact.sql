@@ -37,7 +37,9 @@ WHERE b.outreach_status = 'ready'
 ORDER BY b.outreach_generated_at DESC;
 
 -- Update the pipeline stats view to include email discovery stats
-CREATE OR REPLACE VIEW v_broker_pipeline AS
+-- Must DROP first because CREATE OR REPLACE can't change column names
+DROP VIEW IF EXISTS v_broker_pipeline;
+CREATE VIEW v_broker_pipeline AS
 SELECT
   COUNT(*) FILTER (WHERE research_status = 'pending')   AS pending_research,
   COUNT(*) FILTER (WHERE research_status = 'running')   AS running_research,
