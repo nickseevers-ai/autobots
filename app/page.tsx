@@ -29,12 +29,14 @@ interface Broker {
   outreach_status: string;
   scraped_at: string;
   website: string | null;
+  email: string | null;
   estimated_team_size: string | null;
   research_notes: string | null;
 }
 
 interface OutreachEmail {
   id: string;
+  broker_id: string | null;
   broker_name: string;
   city: string;
   county: string;
@@ -42,6 +44,7 @@ interface OutreachEmail {
   body: string;
   status: string;
   created_at: string;
+  broker_email: string | null; // joined from ca_brokers
 }
 
 interface AgentEvent {
@@ -108,6 +111,10 @@ function StatCard({ label, value, sub, color }: { label: string; value: number |
 
 // ── Email Modal ────────────────────────────────────────────────────────────
 function EmailModal({ email, onClose }: { email: OutreachEmail; onClose: () => void }) {
+  const mailtoHref = email.broker_email
+    ? `mailto:${email.broker_email}?subject=${encodeURIComponent(email.subject)}&body=${encodeURIComponent(email.body)}`
+    : null;
+
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
@@ -115,15 +122,41 @@ function EmailModal({ email, onClose }: { email: OutreachEmail; onClose: () => v
           <div>
             <p className="text-xs text-gray-500 mb-1">{email.broker_name} · {email.city}, CA</p>
             <h3 className="font-semibold text-gray-900">{email.subject}</h3>
+            {email.broker_email && (
+              <p className="text-xs text-blue-600 mt-0.5">To: {email.broker_email}</p>
+            )}
+            {!email.broker_email && (
+              <p className="text-xs text-amber-500 mt-0.5">⚠ No email found yet — run more research steps</p>
+            )}
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
         </div>
         <div className="p-6">
           <pre className="whitespace-pre-wrap font-sans text-sm text-gray-700 leading-relaxed">{email.body}</pre>
         </div>
-        <div className="p-4 border-t border-gray-100 flex gap-2 justify-end">
-          <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusColor(email.status)}`}>{email.status}</span>
-          <span className="text-xs text-gray-400 py-1">{timeAgo(email.created_at)}</span>
+        <div className="p-4 border-t border-gray-100 flex gap-2 justify-between items-center">
+          <div className="flex gap-2">
+            <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusColor(email.status)}`}>{email.status}</span>
+            <span className="text-xs text-gray-400 py-1">{timeAgo(email.created_at)}</span>
+          </div>
+          <div className="flex gap-2">
+            {mailtoHref ? (
+              <a
+                href={mailtoHref}
+                className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg font-medium transition-colors flex items-center gap-1"
+              >
+                ✉ Open in Email Client
+              </a>
+            ) : (
+              <button
+                disabled
+                className="text-xs bg-gray-200 text-gray-400 px-4 py-1.5 rounded-lg font-medium cursor-not-allowed flex items-center gap-1"
+                title="No email address found for this broker yet"
+              >
+                ✉ No Address Yet
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -254,18 +287,24 @@ export default function Dashboard() {
       // Recent brokers
       const { data: brokersData } = await supabase
         .from('ca_brokers')
-        .select('id, license_number, name, city, county, license_type, research_status, outreach_status, scraped_at, website, estimated_team_size, research_notes')
+        .select('id, license_number, name, city, county, license_type, research_status, outreach_status, scraped_at, website, email, estimated_team_size, research_notes')
         .order('scraped_at', { ascending: false })
         .limit(50);
       if (brokersData) setBrokers(brokersData as Broker[]);
 
-      // Ready emails
+      // Ready emails - join broker email from ca_brokers
       const { data: emailsData } = await supabase
         .from('ops_outreach_emails')
-        .select('id, broker_name, city, county, subject, body, status, created_at')
+        .select('id, broker_id, broker_name, city, county, subject, body, status, created_at, ca_brokers(email)')
         .order('created_at', { ascending: false })
         .limit(30);
-      if (emailsData) setEmails(emailsData as OutreachEmail[]);
+      if (emailsData) {
+        const mapped = emailsData.map((e: Record<string, unknown>) => ({
+          ...e,
+          broker_email: (e.ca_brokers as { email?: string } | null)?.email ?? null,
+        }));
+        setEmails(mapped as OutreachEmail[]);
+      }
 
       // Recent agent events
       const { data: eventsData } = await supabase
@@ -420,7 +459,7 @@ export default function Dashboard() {
                         <tr className="border-b border-gray-100 bg-gray-50">
                           <th className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase">Name</th>
                           <th className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase">Location</th>
-                          <th className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase">Type</th>
+                          <th className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase hidden md:table-cell">Contact</th>
                           <th className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase">Research</th>
                           <th className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase">Outreach</th>
                         </tr>
@@ -431,13 +470,25 @@ export default function Dashboard() {
                             <td className="px-4 py-3">
                               <div className="font-medium text-gray-900">{b.name}</div>
                               <div className="text-xs text-gray-400">{b.license_number}</div>
+                              {b.website && (
+                                <a href={b.website.startsWith('http') ? b.website : `https://${b.website}`} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline truncate block max-w-[160px]">
+                                  🌐 {b.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                                </a>
+                              )}
                             </td>
                             <td className="px-4 py-3 text-gray-600">
                               <div>{b.city}</div>
                               <div className="text-xs text-gray-400">{b.county} Co.</div>
                             </td>
-                            <td className="px-4 py-3">
-                              <span className="text-xs text-gray-500 capitalize">{b.license_type?.replace('_', ' ')}</span>
+                            <td className="px-4 py-3 hidden md:table-cell">
+                              {b.email ? (
+                                <a href={`mailto:${b.email}`} className="text-xs text-blue-600 hover:underline flex items-center gap-1">
+                                  <span>✉</span>
+                                  <span className="truncate max-w-[140px]">{b.email}</span>
+                                </a>
+                              ) : (
+                                <span className="text-xs text-gray-300">{b.research_status === 'completed' ? 'Not found' : '—'}</span>
+                              )}
                             </td>
                             <td className="px-4 py-3">
                               <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusColor(b.research_status)}`}>
@@ -481,6 +532,11 @@ export default function Dashboard() {
                             <span className="text-xs text-gray-400 shrink-0">{email.city}, CA</span>
                           </div>
                           <p className="text-sm text-gray-700 font-medium truncate">{email.subject}</p>
+                          {email.broker_email ? (
+                            <p className="text-xs text-blue-500 mt-0.5 truncate">To: {email.broker_email}</p>
+                          ) : (
+                            <p className="text-xs text-amber-400 mt-0.5">No email address yet</p>
+                          )}
                           <p className="text-xs text-gray-400 mt-1 line-clamp-1">
                             {email.body.split('\n').find(l => l.trim().length > 10) ?? ''}
                           </p>
@@ -488,6 +544,15 @@ export default function Dashboard() {
                         <div className="flex flex-col items-end gap-1 shrink-0">
                           <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusColor(email.status)}`}>{email.status}</span>
                           <span className="text-xs text-gray-400">{timeAgo(email.created_at)}</span>
+                          {email.broker_email && (
+                            <a
+                              href={`mailto:${email.broker_email}?subject=${encodeURIComponent(email.subject)}&body=${encodeURIComponent(email.body)}`}
+                              onClick={e => e.stopPropagation()}
+                              className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded font-medium mt-1"
+                            >
+                              Send ✉
+                            </a>
+                          )}
                         </div>
                       </div>
                     </div>
