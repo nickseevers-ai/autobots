@@ -130,6 +130,106 @@ function EmailModal({ email, onClose }: { email: OutreachEmail; onClose: () => v
   );
 }
 
+// ── Pipeline Controls ──────────────────────────────────────────────────────
+type TriggerStatus = 'idle' | 'running' | 'success' | 'error';
+
+interface TriggerResult {
+  status: TriggerStatus;
+  message: string;
+}
+
+function PipelineControls({ onDone }: { onDone: () => void }) {
+  const [heartbeat, setHeartbeat] = useState<TriggerResult>({ status: 'idle', message: '' });
+  const [execute, setExecute] = useState<TriggerResult>({ status: 'idle', message: '' });
+
+  async function runAction(action: 'heartbeat' | 'execute_step', setter: (r: TriggerResult) => void) {
+    setter({ status: 'running', message: 'Running…' });
+    try {
+      const res = await fetch('/api/ops/trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const msg = action === 'heartbeat'
+          ? `Done! Triggers evaluated: ${data.triggers?.evaluated ?? 0}, fired: ${data.triggers?.fired ?? 0}`
+          : `Done! Steps executed: ${data.results?.executed ?? 0}, succeeded: ${data.results?.succeeded ?? 0}`;
+        setter({ status: 'success', message: msg });
+        setTimeout(onDone, 1500); // refresh dashboard data
+      } else {
+        setter({ status: 'error', message: data.error ?? 'Something went wrong' });
+      }
+    } catch (e: unknown) {
+      setter({ status: 'error', message: e instanceof Error ? e.message : 'Network error' });
+    }
+  }
+
+  function StatusBadge({ result }: { result: TriggerResult }) {
+    if (result.status === 'idle') return null;
+    const colors = {
+      running: 'bg-blue-50 text-blue-700 border-blue-200',
+      success: 'bg-green-50 text-green-700 border-green-200',
+      error: 'bg-red-50 text-red-700 border-red-200',
+    };
+    return (
+      <p className={`text-xs px-3 py-1.5 rounded-lg border mt-2 ${colors[result.status]}`}>
+        {result.status === 'running' && <span className="inline-block animate-spin mr-1">⟳</span>}
+        {result.message}
+      </p>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+      <h2 className="font-semibold text-gray-700 text-sm mb-4 flex items-center gap-2">
+        <span>⚡</span> Pipeline Controls
+      </h2>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+        {/* Scrape DRE Brokers */}
+        <div className="border border-gray-100 rounded-xl p-4 bg-gray-50">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xl">🔍</span>
+            <span className="font-semibold text-sm text-gray-800">Scrape DRE Brokers</span>
+          </div>
+          <p className="text-xs text-gray-500 mb-3">
+            Runs the heartbeat which checks all triggers — including the DRE scraper. Kicks off a new batch of CA broker leads.
+          </p>
+          <button
+            disabled={heartbeat.status === 'running'}
+            onClick={() => runAction('heartbeat', setHeartbeat)}
+            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+          >
+            {heartbeat.status === 'running' ? '⟳ Running…' : '▶ Run Heartbeat'}
+          </button>
+          <StatusBadge result={heartbeat} />
+        </div>
+
+        {/* Execute Next Step */}
+        <div className="border border-gray-100 rounded-xl p-4 bg-gray-50">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xl">⚙️</span>
+            <span className="font-semibold text-sm text-gray-800">Execute Next Step</span>
+          </div>
+          <p className="text-xs text-gray-500 mb-3">
+            Picks up the next queued mission step and runs it — research, email writing, or DRE scraping.
+          </p>
+          <button
+            disabled={execute.status === 'running'}
+            onClick={() => runAction('execute_step', setExecute)}
+            className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+          >
+            {execute.status === 'running' ? '⟳ Running…' : '▶ Execute Step'}
+          </button>
+          <StatusBadge result={execute} />
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
 // ── Main Dashboard ─────────────────────────────────────────────────────────
 export default function Dashboard() {
   const [stats, setStats] = useState<PipelineStats | null>(null);
@@ -248,6 +348,9 @@ export default function Dashboard() {
           <StatCard label="Emails Sent" value={stats?.emails_sent ?? 0} color="text-purple-600" />
           <StatCard label="Pipeline" value={`${pipelinePercent}%`} color="text-blue-700" sub="brokers with emails" />
         </div>
+
+        {/* Pipeline Controls */}
+        <PipelineControls onDone={fetchData} />
 
         {/* Pipeline progress bar */}
         {(stats?.total_brokers ?? 0) > 0 && (
